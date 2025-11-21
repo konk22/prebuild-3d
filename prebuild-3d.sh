@@ -253,8 +253,9 @@ sudo docker compose --profile mainsail --profile klipperscreen up -d --build
 
 # sudo docker compose ps
 
-if [ ! -f "$FILE" ]; then
+if ! sudo test -f "$FILE"; then
     echo "Файл $FILE не существует. Нечего удалять."
+    exit 0
 fi
 
 # Удаляем строку с нужным MIRROR внутри массива registry-mirrors
