@@ -107,7 +107,6 @@ else
     echo "{\"registry-mirrors\": [\"$MIRROR\"]}" | sudo tee "$FILE" > /dev/null
     sudo systemctl restart docker
     echo "Docker registry mirror $MIRROR добавлен и Docker перезапущен"
-    exit 0
 fi
 
 sudo mv "$TMP" "$FILE"
@@ -256,7 +255,6 @@ sudo docker compose --profile mainsail --profile klipperscreen up -d --build
 
 if [ ! -f "$FILE" ]; then
     echo "Файл $FILE не существует. Нечего удалять."
-    exit 0
 fi
 
 # Удаляем строку с нужным MIRROR внутри массива registry-mirrors
