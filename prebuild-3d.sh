@@ -259,7 +259,7 @@ fi
 
 # Удаляем строку с нужным MIRROR внутри массива registry-mirrors
 sudo sed "/registry-mirrors/ , /]/ {
-    /$MIRROR/d
+    \#$MIRROR#d
 }" "$FILE" > "$TMP"
 
 # Убираем пустые элементы и лишние запятые
