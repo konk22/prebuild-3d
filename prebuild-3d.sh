@@ -14,6 +14,8 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 MIRROR="http://192.168.11.102:5000"
+FILE="/etc/docker/daemon.json"
+TMP="/tmp/daemon.json.$$"
 
 log_info()    { echo -e "${BLUE}[INFO]${NC} $*"; }
 log_success() { echo -e "${GREEN}[ГОТОВО]${NC} $*"; }
@@ -80,14 +82,37 @@ systemctl disable ModemManager.service bluetooth.service
 
 sudo mkdir -p /etc/docker
 
-if [ -f /etc/docker/daemon.json ]; then
-    # Если файл существует — добавляем mirror, избегая дубликатов
-    sudo jq --arg m "$MIRROR" '.["registry-mirrors"] |= (if . then (. + [$m]) else [$m] end) | unique' /etc/docker/daemon.json > /tmp/daemon.json && sudo mv /tmp/daemon.json /etc/docker/daemon.json
+if [ -f "$FILE" ]; then
+    # Проверяем, есть ли уже такой MIRROR
+    if ! grep -q "\"$MIRROR\"" "$FILE"; then
+        # Добавляем MIRROR в массив registry-mirrors или создаём массив, если его нет
+        sudo sed '
+            /"registry-mirrors"/ {
+                :a
+                /]/! {N;ba}        # читаем до конца массива ]
+                s/]/,"'"$MIRROR"'"]/   # вставляем новый элемент перед ]
+            }
+        ' "$FILE" > "$TMP"
+
+        # Если массива registry-mirrors вообще не было — добавим ключ
+        if ! grep -q '"registry-mirrors"' "$TMP"; then
+            sudo sed -i '1s|{|{"registry-mirrors":["'"$MIRROR"'"],|' "$TMP"
+        fi
+    else
+        # Дубликата нет — просто копируем файл
+        cp "$FILE" "$TMP"
+    fi
 else
-    # Если файла нет — создаём
-    echo "{\"registry-mirrors\": [\"$MIRROR\"]}" | sudo tee /etc/docker/daemon.json > /dev/null
+    # Файла нет — создаём новый
+    echo "{\"registry-mirrors\": [\"$MIRROR\"]}" | sudo tee "$FILE" > /dev/null
+    sudo systemctl restart docker
+    echo "Docker registry mirror $MIRROR добавлен и Docker перезапущен"
+    exit 0
 fi
+
+sudo mv "$TMP" "$FILE"
 sudo systemctl restart docker
+
 # =============================================================================
 # 2. Клонирование Prind от пользователя pi
 # =============================================================================
@@ -229,24 +254,37 @@ sudo docker compose --profile mainsail --profile klipperscreen up -d --build
 
 # sudo docker compose ps
 
-if [ ! -f /etc/docker/daemon.json ]; then
-    echo "Файл /etc/docker/daemon.json не существует. Нечего удалять."
+if [ ! -f "$FILE" ]; then
+    echo "Файл $FILE не существует. Нечего удалять."
     exit 0
 fi
 
-sudo jq --arg m "$MIRROR" 'del(.["registry-mirrors"][] | select(. == $m)) | .["registry-mirrors"] |= (if length == 0 then empty else . end)' /etc/docker/daemon.json > /tmp/daemon.json && sudo mv /tmp/daemon.json /etc/docker/daemon.json
+# Удаляем строку с нужным MIRROR внутри массива registry-mirrors
+sudo sed "/registry-mirrors/ , /]/ {
+    /$MIRROR/d
+}" "$FILE" > "$TMP"
 
-# Если после удаления registry-mirrors пустой — удаляем ключ полностью
-sudo jq 'del(.["registry-mirrors"] | select(length == 0))' /etc/docker/daemon.json > /tmp/daemon.json && sudo mv /tmp/daemon.json /etc/docker/daemon.json
+# Убираем пустые элементы и лишние запятые
+sudo sed -i '
+    s/,\s*]/]/g;      # убираем запятую перед закрывающей скобкой
+    s/\[\s*\]/[]/g;   # нормализуем пустой массив
+' "$TMP"
 
-# Если файл стал пустым — удаляем его
-if [ "$(cat /etc/docker/daemon.json | wc -c)" -le 10 ]; then
-    sudo rm -f /etc/docker/daemon.json
+# Если массив registry-mirrors стал пустым — удаляем ключ
+sudo sed -i '
+    /"registry-mirrors": \[\]/d
+' "$TMP"
+
+# Если JSON стал маленьким (пустой объект или почти пустой) — удаляем файл
+if [ "$(wc -c < "$TMP")" -le 10 ]; then
+    sudo rm -f "$FILE"
+else
+    sudo mv "$TMP" "$FILE"
 fi
 
-rm /etc/apt/apt.conf.d/02proxy
-
 sudo systemctl restart docker
+
+rm /etc/apt/apt.conf.d/02proxy
 
 # =============================================================================
 # 7. Установка темы Plymouth и перезагрузка
